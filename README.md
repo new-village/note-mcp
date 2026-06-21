@@ -77,9 +77,7 @@ Releases are handled by GitHub Actions + semantic-release.
 - GitHub Actions runs CI.
 - The release workflow creates GitHub tags/releases and publishes to npm.
 
-Required repository secret for npm publishing unless npm Trusted Publishing is configured:
-
-- `NPM_TOKEN`
+npm publishing uses npm Trusted Publishing with GitHub Actions OIDC. Configure `new-village/note-mcp` and `.github/workflows/release.yml` as a trusted publisher on npmjs.com. No `NPM_TOKEN` repository secret is required.
 
 ## Development
 
