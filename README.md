@@ -232,10 +232,10 @@ note.com tools:
 - `note_list_drafts` — list drafts for the authenticated account via `GET /v2/note_list/contents?limit={limit}&page={page}&status=draft&without_magazines=true`. By default returns the full internal API payload. For LLM-friendly list views, pass `fields: "summary"` or `includeBody: false`.
 - `note_get_note` — fetch a note by note key, e.g. `n1a0b26f944f4`
 - `note_get_draft` — fetch authenticated draft detail by note key via `GET /v3/notes/{noteKey}?draft=true&draft_reedit=false`
-- `note_create_draft` — create a draft by first calling `POST /v1/text_notes` with an empty-body editor payload to obtain `data.id`/`data.key`, then saving content via `draft_save`
-- `note_update_draft` — update a draft by numeric draft/note id
-- `note_publish_draft` — publish a draft by note key; internally resolves the numeric id from draft detail, then calls `PUT /v1/text_notes/{id}` with note.com's current publish payload
-- `note_upload_eyecatch` — upload an eyecatch/cover image via `POST /v1/image_upload/note_eyecatch`. Provide numeric `noteId` and either `imagePath` or `imageUrl`; width/height default to note.com's recommended `1280x670`.
+- `note_create_draft` — create a draft by first calling `POST /v1/text_notes` with an empty-body editor payload to obtain `data.id`/`data.key`, then saving content via `draft_save`. By default returns an LLM-friendly summary with `id`/`noteId`, `key`/`noteKey`, `editUrl`, `publicUrl`, and `nextActions`; pass `responseFormat: "full"` for raw responses.
+- `note_update_draft` — update a draft by numeric draft/note id. By default returns a compact summary; pass `responseFormat: "full"` for raw responses.
+- `note_publish_draft` — publicly publish a draft by note key; internally resolves the numeric id from draft detail, then calls `PUT /v1/text_notes/{id}` with note.com's current publish payload. By default returns `status`, `key`, `noteUrl`, `eyecatch`, and `publishedAt`; pass `responseFormat: "full"` for raw responses.
+- `note_upload_eyecatch` — upload an eyecatch/cover image via `POST /v1/image_upload/note_eyecatch`. Use the `draft.id` returned by `note_create_draft` as `noteId`; this can be called before publishing. Provide numeric `noteId` and either `imagePath` or `imageUrl`; width/height default to note.com's recommended `1280x670`. By default returns `noteId` and `eyecatchUrl`; pass `responseFormat: "full"` for raw responses.
 - `note_delete_draft` — delete an unpublished draft by numeric draft/note id via `DELETE /v1/text_notes/draft_delete?id={draftId}`
 - `note_delete_note` — delete a published/deletable note by note key via `DELETE /v1/notes/n/{noteKey}`
 
@@ -265,6 +265,20 @@ Do not pass Markdown if visual formatting is expected:
 ```
 
 AI agents should generate or convert content to note-compatible HTML before calling the tool. `note-mcp` intentionally stays a thin bridge to note.com's API; Markdown-to-HTML conversion belongs in the caller or a future optional helper, not in the core draft tools.
+
+Recommended body HTML:
+
+- `<h2>`, `<h3>` for headings
+- `<p>` for paragraphs
+- `<ul><li>` / `<ol><li>` for lists
+- `<strong>`, `<em>` for emphasis
+- `<a href="...">` for links
+
+Avoid:
+
+- Full HTML documents (`<html>`, `<head>`, `<body>`)
+- Inline scripts/styles
+- Unsupported custom attributes
 
 ## API basis
 

@@ -18,6 +18,7 @@ import { getPackageVersion } from './version.js';
 
 const NOTE_BODY_DESCRIPTION =
   'Article body as note-compatible HTML. Markdown is not rendered automatically by note.com; callers should convert Markdown to HTML before passing it.';
+const RESPONSE_FORMAT_SCHEMA = z.enum(['summary', 'full']).default('summary');
 
 if (process.argv[2] === 'auth') {
   await runAuthCli(process.argv.slice(3));
@@ -211,19 +212,21 @@ async function runMcpServer(): Promise<void> {
     {
       title: 'Create note.com draft',
       description:
-        'Creates a note.com draft with title/body/hashtags using an unofficial internal API. The body should be HTML compatible with note.com editor content. Do not pass Markdown if visual formatting is expected; convert Markdown to HTML before calling this tool.',
+        'Creates a note.com draft with title/body/hashtags using an unofficial internal API. The body should be HTML compatible with note.com editor content. Do not pass Markdown if visual formatting is expected; convert Markdown to HTML before calling this tool. By default returns an LLM-friendly summary with id/noteId/key/noteKey/editUrl/publicUrl/nextActions; pass responseFormat: "full" for the raw API payload.',
       inputSchema: {
         title: z.string().min(1),
         body: z.string().min(1).describe(NOTE_BODY_DESCRIPTION),
         hashtags: z.array(z.string().min(1)).optional(),
+        responseFormat: RESPONSE_FORMAT_SCHEMA,
       },
     },
-    async ({ title, body, hashtags }) =>
+    async ({ title, body, hashtags, responseFormat }) =>
       withClient((client) =>
         client.createDraft({
           title,
           body,
           ...(hashtags ? { hashtags } : {}),
+          responseFormat,
         }),
       ),
   );
@@ -233,21 +236,23 @@ async function runMcpServer(): Promise<void> {
     {
       title: 'Update note.com draft',
       description:
-        'Updates a note.com draft by numeric draft/note id via POST /v1/text_notes/draft_save?id={draftId}&is_temp_saved=true. The body should be HTML compatible with note.com editor content. Do not pass Markdown if visual formatting is expected; convert Markdown to HTML before calling this tool.',
+        'Updates a note.com draft by numeric draft/note id via POST /v1/text_notes/draft_save?id={draftId}&is_temp_saved=true. The body should be HTML compatible with note.com editor content. Do not pass Markdown if visual formatting is expected; convert Markdown to HTML before calling this tool. By default returns a compact summary; pass responseFormat: "full" for the raw API payload.',
       inputSchema: {
         draftId: z.string().min(1),
         title: z.string().min(1),
         body: z.string().min(1).describe(NOTE_BODY_DESCRIPTION),
         hashtags: z.array(z.string().min(1)).optional(),
+        responseFormat: RESPONSE_FORMAT_SCHEMA,
       },
     },
-    async ({ draftId, title, body, hashtags }) =>
+    async ({ draftId, title, body, hashtags, responseFormat }) =>
       withClient((client) =>
         client.updateDraft({
           draftId,
           title,
           body,
           ...(hashtags ? { hashtags } : {}),
+          responseFormat,
         }),
       ),
   );
@@ -257,12 +262,14 @@ async function runMcpServer(): Promise<void> {
     {
       title: 'Publish note.com draft',
       description:
-        'Publishes a draft by note key. Internally fetches draft detail via /v3/notes/{noteKey}?draft=true, then publishes with PUT /v1/text_notes/{id}. The saved draft body is sent to note.com as editor HTML; Markdown is not converted during publish.',
+        'Publicly publishes a draft by note key. Internally fetches draft detail via /v3/notes/{noteKey}?draft=true, then publishes with PUT /v1/text_notes/{id}. The saved draft body is sent to note.com as editor HTML; Markdown is not converted during publish. By default returns an LLM-friendly summary with status/key/noteUrl/eyecatch/publishedAt; pass responseFormat: "full" for the raw API payload.',
       inputSchema: {
         noteKey: z.string().min(1),
+        responseFormat: RESPONSE_FORMAT_SCHEMA,
       },
     },
-    async ({ noteKey }) => withClient((client) => client.publishDraft(noteKey)),
+    async ({ noteKey, responseFormat }) =>
+      withClient((client) => client.publishDraft(noteKey, { responseFormat })),
   );
 
   server.registerTool(
@@ -270,16 +277,17 @@ async function runMcpServer(): Promise<void> {
     {
       title: 'Upload note.com eyecatch image',
       description:
-        'Uploads an eyecatch/cover image for a note via POST /v1/image_upload/note_eyecatch. Provide the numeric noteId and either imagePath or imageUrl. note.com recommends 1280x670px; width/height default to 1280/670.',
+        'Uploads an eyecatch/cover image for a note via POST /v1/image_upload/note_eyecatch. Use draft.id returned by note_create_draft as noteId; this can be called before publishing. Provide the numeric noteId and either imagePath or imageUrl. note.com recommends 1280x670px; width/height default to 1280/670. By default returns noteId and eyecatchUrl; pass responseFormat: "full" for the raw API payload.',
       inputSchema: {
         noteId: z.string().min(1),
         imagePath: z.string().min(1).optional(),
         imageUrl: z.string().url().optional(),
         width: z.number().int().positive().default(1280),
         height: z.number().int().positive().default(670),
+        responseFormat: RESPONSE_FORMAT_SCHEMA,
       },
     },
-    async ({ noteId, imagePath, imageUrl, width, height }) => {
+    async ({ noteId, imagePath, imageUrl, width, height, responseFormat }) => {
       if (!imagePath && !imageUrl) {
         return errorResult(new Error('imagePath or imageUrl is required'));
       }
@@ -290,6 +298,7 @@ async function runMcpServer(): Promise<void> {
           ...(imageUrl ? { imageUrl } : {}),
           width,
           height,
+          responseFormat,
         }),
       );
     },

@@ -20,6 +20,13 @@ export interface DraftPayload {
   hashtags?: string[];
   draftId?: string;
   bodyLength?: number;
+  responseFormat?: ResponseFormat;
+}
+
+export type ResponseFormat = 'summary' | 'full';
+
+export interface PublishDraftOptions {
+  responseFormat?: ResponseFormat;
 }
 
 export interface UploadEyecatchPayload {
@@ -28,6 +35,7 @@ export interface UploadEyecatchPayload {
   imageUrl?: string;
   width?: number;
   height?: number;
+  responseFormat?: ResponseFormat;
 }
 
 export interface ListMyNotesOptions {

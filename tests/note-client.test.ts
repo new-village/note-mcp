@@ -49,6 +49,53 @@ describe('NoteClient', () => {
     expect(headers.get('x-requested-with')).toBe('XMLHttpRequest');
   });
 
+  it('returns an LLM-friendly summary when creating drafts with responseFormat summary', async () => {
+    const fetchMock = mockFetch(async (input) => {
+      if (String(input).endsWith('/v1/text_notes')) {
+        return response({ data: { id: 123, key: 'n123', name: 't', user: { urlname: 'newvillage' } } }, { status: 201 });
+      }
+      return response({ data: { result: true } }, { status: 201 });
+    });
+    const client = new NoteClient({ cookie: 'sid=abc', fetch: fetchMock });
+
+    await expect(
+      client.createDraft({ title: 't', body: '<p>b</p>', responseFormat: 'summary' }),
+    ).resolves.toEqual({
+      id: 123,
+      noteId: 123,
+      key: 'n123',
+      noteKey: 'n123',
+      editUrl: 'https://note.com/notes/n123/edit',
+      publicUrl: 'https://note.com/newvillage/n/n123',
+      status: 'draft',
+      nextActions: {
+        uploadEyecatch: { tool: 'note_upload_eyecatch', noteId: 123 },
+        publish: { tool: 'note_publish_draft', noteKey: 'n123' },
+      },
+    });
+  });
+
+  it('hydrates create draft summaries from draft detail when the shell response lacks urlname', async () => {
+    const fetchMock = mockFetch(async (input) => {
+      const url = String(input);
+      if (url.endsWith('/v1/text_notes')) {
+        return response({ data: { id: 123, key: 'n123', name: 't' } }, { status: 201 });
+      }
+      if (url.includes('/v3/notes/n123?draft=true')) {
+        return response({ data: { id: 123, key: 'n123', user: { urlname: 'newvillage' } } });
+      }
+      return response({ data: { result: true } }, { status: 201 });
+    });
+    const client = new NoteClient({ cookie: 'sid=abc', fetch: fetchMock });
+
+    await expect(
+      client.createDraft({ title: 't', body: '<p>b</p>', responseFormat: 'summary' }),
+    ).resolves.toMatchObject({
+      publicUrl: 'https://note.com/newvillage/n/n123',
+    });
+    expect(String(fetchMock.calls[2]?.[0])).toMatch(/\/v3\/notes\/n123\?draft=true/);
+  });
+
   it('creates drafts by creating a shell note then saving draft content', async () => {
     const fetchMock = mockFetch(async (input) => {
       if (String(input).endsWith('/v1/text_notes')) {
@@ -176,6 +223,46 @@ describe('NoteClient', () => {
     });
   });
 
+  it('returns an LLM-friendly summary when publishing drafts with responseFormat summary', async () => {
+    const fetchMock = mockFetch(async (input) => {
+      if (String(input).includes('/v3/notes/n123?')) {
+        return response({
+          data: {
+            id: 123,
+            key: 'n123',
+            name: 't',
+            body: '<p>b</p>',
+            price: 0,
+            status: 'draft',
+            slug: 'slug-n123',
+            sendNotificationsFlag: false,
+            user: { urlname: 'newvillage' },
+            eyecatch: 'https://assets.example/cover.png',
+          },
+        });
+      }
+      return response({
+        data: {
+          status: 'published',
+          key: 'n123',
+          publishAt: '2026-06-21T00:00:00+09:00',
+          eyecatch: 'https://assets.example/cover.png',
+          user: { urlname: 'newvillage' },
+        },
+      });
+    });
+    const client = new NoteClient({ cookie: 'sid=abc', fetch: fetchMock });
+
+    await expect(client.publishDraft('n123', { responseFormat: 'summary' })).resolves.toEqual({
+      status: 'published',
+      key: 'n123',
+      noteKey: 'n123',
+      noteUrl: 'https://note.com/newvillage/n/n123',
+      eyecatch: 'https://assets.example/cover.png',
+      publishedAt: '2026-06-21T00:00:00+09:00',
+    });
+  });
+
   it('uploads eyecatch images as multipart form data', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'note-mcp-'));
     const imagePath = join(dir, 'cover.png');
@@ -184,8 +271,14 @@ describe('NoteClient', () => {
     const client = new NoteClient({ cookie: 'sid=abc', fetch: fetchMock });
 
     try {
-      await expect(client.uploadEyecatch({ noteId: '166401625', imagePath })).resolves.toEqual({
-        data: { url: 'https://assets.example/cover.png' },
+      await expect(
+        client.uploadEyecatch({ noteId: '166401625', imagePath, responseFormat: 'summary' }),
+      ).resolves.toEqual({
+        noteId: '166401625',
+        eyecatchUrl: 'https://assets.example/cover.png',
+        url: 'https://assets.example/cover.png',
+        width: 1280,
+        height: 670,
       });
     } finally {
       rmSync(dir, { recursive: true, force: true });

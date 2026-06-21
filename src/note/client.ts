@@ -8,6 +8,7 @@ import type {
   JsonValue,
   ListMyNotesOptions,
   NoteClientOptions,
+  PublishDraftOptions,
   UploadEyecatchPayload,
 } from './types.js';
 
@@ -74,21 +75,32 @@ export class NoteClient {
       }),
     });
     const draft = extractDraft(shell);
-    const save = await this.saveDraft({ ...payload, draftId: String(draft.id) });
+    const save = await this.saveDraft({ ...payload, draftId: String(draft.id), responseFormat: 'full' });
+    if (payload.responseFormat === 'summary') {
+      return this.hydratedDraftSummary(draft);
+    }
     return { draft, save };
   }
 
   async updateDraft(payload: DraftPayload & { draftId: string }): Promise<JsonValue> {
-    return this.saveDraft(payload);
+    const save = await this.saveDraft(payload);
+    if (payload.responseFormat === 'summary') {
+      return omitUndefined({ id: payload.draftId, noteId: payload.draftId, status: 'draft', updated: true });
+    }
+    return save;
   }
 
-  async publishDraft(noteKey: string): Promise<JsonValue> {
+  async publishDraft(noteKey: string, options: PublishDraftOptions = {}): Promise<JsonValue> {
     const draft = await this.getDraft(noteKey);
     const note = extractNoteData(draft);
-    return this.request(`/v1/text_notes/${encodeURIComponent(String(note.id))}`, {
+    const published = await this.request(`/v1/text_notes/${encodeURIComponent(String(note.id))}`, {
       method: 'PUT',
       body: JSON.stringify(publishPayload(note)),
     });
+    if (options.responseFormat === 'summary') {
+      return publishSummary(published, note);
+    }
+    return published;
   }
 
   async uploadEyecatch(payload: UploadEyecatchPayload): Promise<JsonValue> {
@@ -99,10 +111,14 @@ export class NoteClient {
     form.append('width', String(payload.width ?? 1280));
     form.append('height', String(payload.height ?? 670));
 
-    return this.request('/v1/image_upload/note_eyecatch', {
+    const uploaded = await this.request('/v1/image_upload/note_eyecatch', {
       method: 'POST',
       body: form,
     });
+    if (payload.responseFormat === 'summary') {
+      return eyecatchSummary(uploaded, payload);
+    }
+    return uploaded;
   }
 
   async deleteDraft(draftId: string): Promise<JsonValue> {
@@ -115,6 +131,23 @@ export class NoteClient {
     return this.request(`/v1/notes/n/${encodeURIComponent(noteKey)}`, {
       method: 'DELETE',
     });
+  }
+
+  private async hydratedDraftSummary(draft: { [key: string]: JsonValue; id: string | number }): Promise<JsonValue> {
+    const key = firstString(draft.key, draft.noteKey);
+    if (!key || urlnameFromUser(draft.user) || firstString(draft.urlname)) {
+      return draftSummary(draft);
+    }
+
+    try {
+      const detail = await this.getDraft(key);
+      if (isJsonObject(detail) && isJsonObject(detail.data)) {
+        return draftSummary({ ...draft, ...detail.data, id: draft.id });
+      }
+    } catch {
+      // Keep draft creation successful even if optional summary hydration fails.
+    }
+    return draftSummary(draft);
   }
 
   private async saveDraft(payload: DraftPayload & { draftId: string }): Promise<JsonValue> {
@@ -211,6 +244,76 @@ function extractNoteData(payload: JsonValue): { [key: string]: JsonValue; id: st
     }
   }
   throw new NoteApiError('note.com note response did not include data.id', 502, payload);
+}
+
+function draftSummary(draft: { [key: string]: JsonValue; id: string | number }): JsonValue {
+  const key = firstString(draft.key, draft.noteKey);
+  const urlname = firstString(draft.urlname) ?? urlnameFromUser(draft.user);
+  return omitUndefined({
+    id: draft.id,
+    noteId: draft.id,
+    key,
+    noteKey: key,
+    editUrl: key ? `https://note.com/notes/${key}/edit` : undefined,
+    publicUrl:
+      noteUrl(key, draft.user, 'published') ??
+      (urlname && key ? `https://note.com/${urlname}/n/${key}` : undefined),
+    status: 'draft',
+    nextActions: key
+      ? {
+          uploadEyecatch: { tool: 'note_upload_eyecatch', noteId: draft.id },
+          publish: { tool: 'note_publish_draft', noteKey: key },
+        }
+      : undefined,
+  });
+}
+
+function publishSummary(
+  published: JsonValue,
+  fallbackNote: { [key: string]: JsonValue; id: string | number },
+): JsonValue {
+  const data = isJsonObject(published) && isJsonObject(published.data) ? published.data : published;
+  const source = isJsonObject(data) ? data : {};
+  const key = firstString(source.key, source.noteKey, fallbackNote.key, fallbackNote.noteKey);
+  const user = source.user ?? fallbackNote.user;
+  const eyecatch = firstString(
+    source.eyecatch,
+    source.eyecatchUrl,
+    source.eyecatch_url,
+    fallbackNote.eyecatch,
+    fallbackNote.eyecatchUrl,
+    fallbackNote.eyecatch_url,
+  );
+  return omitUndefined({
+    status: firstString(source.status) ?? 'published',
+    key,
+    noteKey: key,
+    noteUrl: noteUrl(key, user, 'published'),
+    eyecatch,
+    publishedAt: firstDefined(
+      source.publishedAt,
+      source.published_at,
+      source.publishAt,
+      source.publish_at,
+      fallbackNote.publishedAt,
+      fallbackNote.published_at,
+      fallbackNote.publishAt,
+      fallbackNote.publish_at,
+    ),
+  });
+}
+
+function eyecatchSummary(uploaded: JsonValue, payload: UploadEyecatchPayload): JsonValue {
+  const data = isJsonObject(uploaded) && isJsonObject(uploaded.data) ? uploaded.data : uploaded;
+  const source = isJsonObject(data) ? data : {};
+  const url = firstString(source.url, source.eyecatchUrl, source.eyecatch_url);
+  return omitUndefined({
+    noteId: payload.noteId,
+    eyecatchUrl: url,
+    url,
+    width: payload.width ?? 1280,
+    height: payload.height ?? 670,
+  });
 }
 
 function publishPayload(note: { [key: string]: JsonValue; id: string | number }): { [key: string]: JsonValue } {
@@ -320,6 +423,10 @@ function firstDefined(...values: Array<JsonValue | undefined>): JsonValue | unde
 
 function firstString(...values: Array<JsonValue | undefined>): string | undefined {
   return values.find((value): value is string => typeof value === 'string' && value.length > 0);
+}
+
+function urlnameFromUser(user: JsonValue | undefined): string | undefined {
+  return isJsonObject(user) ? firstString(user.urlname) : undefined;
 }
 
 function noteUrl(
