@@ -22,6 +22,14 @@ export interface DraftPayload {
   bodyLength?: number;
 }
 
+export interface UploadEyecatchPayload {
+  noteId: string;
+  imagePath?: string;
+  imageUrl?: string;
+  width?: number;
+  height?: number;
+}
+
 export interface ListMyNotesOptions {
   fields?: 'full' | 'summary';
   includeBody?: boolean | undefined;

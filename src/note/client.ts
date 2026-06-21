@@ -1,3 +1,6 @@
+import { readFile } from 'node:fs/promises';
+import { basename } from 'node:path';
+
 import { NoteApiError } from './errors.js';
 import type {
   DraftPayload,
@@ -5,6 +8,7 @@ import type {
   JsonValue,
   ListMyNotesOptions,
   NoteClientOptions,
+  UploadEyecatchPayload,
 } from './types.js';
 
 const BASE_URL = 'https://note.com/api';
@@ -87,6 +91,20 @@ export class NoteClient {
     });
   }
 
+  async uploadEyecatch(payload: UploadEyecatchPayload): Promise<JsonValue> {
+    const file = await this.fileFromPayload(payload);
+    const form = new FormData();
+    form.append('note_id', payload.noteId);
+    form.append('file', file);
+    form.append('width', String(payload.width ?? 1280));
+    form.append('height', String(payload.height ?? 670));
+
+    return this.request('/v1/image_upload/note_eyecatch', {
+      method: 'POST',
+      body: form,
+    });
+  }
+
   async deleteDraft(draftId: string): Promise<JsonValue> {
     return this.request(`/v1/text_notes/draft_delete?id=${encodeURIComponent(draftId)}`, {
       method: 'DELETE',
@@ -115,6 +133,31 @@ export class NoteClient {
     );
   }
 
+  private async fileFromPayload(payload: UploadEyecatchPayload): Promise<File> {
+    if (payload.imagePath) {
+      const bytes = await readFile(payload.imagePath);
+      const filename = basename(payload.imagePath);
+      return new File([bytes], filename, { type: mimeType(filename) });
+    }
+
+    if (payload.imageUrl) {
+      const response = await this.fetchImpl(payload.imageUrl);
+      const body = await response.arrayBuffer();
+      if (!response.ok) {
+        throw new NoteApiError(
+          `image download failed: ${response.status} ${response.statusText}`,
+          response.status,
+          null,
+        );
+      }
+      const filename = basename(new URL(payload.imageUrl).pathname) || 'eyecatch.jpg';
+      const contentType = response.headers.get('content-type') ?? mimeType(filename);
+      return new File([body], filename, { type: contentType });
+    }
+
+    throw new NoteApiError('imagePath or imageUrl is required', 400, null);
+  }
+
   private async request(path: string, init: RequestInit = {}): Promise<JsonValue> {
     const headers = new Headers(init.headers);
     headers.set('accept', 'application/json');
@@ -122,7 +165,7 @@ export class NoteClient {
     headers.set('user-agent', this.userAgent);
     headers.set('x-requested-with', 'XMLHttpRequest');
 
-    if (init.body && !headers.has('content-type')) {
+    if (typeof init.body === 'string' && !headers.has('content-type')) {
       headers.set('content-type', 'application/json');
     }
 
@@ -205,6 +248,14 @@ function publishPayload(note: { [key: string]: JsonValue; id: string | number })
     line_add_friend_access_token: null,
     pro_coupon_keys: [],
   };
+}
+
+function mimeType(filename: string): string {
+  const lower = filename.toLowerCase();
+  if (lower.endsWith('.png')) return 'image/png';
+  if (lower.endsWith('.webp')) return 'image/webp';
+  if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return 'image/jpeg';
+  return 'application/octet-stream';
 }
 
 function textLength(html: string): number {

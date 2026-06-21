@@ -1,3 +1,7 @@
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { describe, expect, it } from 'vitest';
 
 import { readCookieFromEnv } from '../src/note/auth.js';
@@ -170,6 +174,37 @@ describe('NoteClient', () => {
       price: 0,
       slug: 'slug-n123',
     });
+  });
+
+  it('uploads eyecatch images as multipart form data', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'note-mcp-'));
+    const imagePath = join(dir, 'cover.png');
+    writeFileSync(imagePath, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+    const fetchMock = mockFetch(async () => response({ data: { url: 'https://assets.example/cover.png' } }));
+    const client = new NoteClient({ cookie: 'sid=abc', fetch: fetchMock });
+
+    try {
+      await expect(client.uploadEyecatch({ noteId: '166401625', imagePath })).resolves.toEqual({
+        data: { url: 'https://assets.example/cover.png' },
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+
+    expect(fetchMock.calls[0]?.[0]).toBe('https://note.com/api/v1/image_upload/note_eyecatch');
+    const init = fetchMock.calls[0]?.[1];
+    expect(init?.method).toBe('POST');
+    const headers = init?.headers as Headers;
+    expect(headers.get('origin')).toBe('https://editor.note.com');
+    expect(headers.get('referer')).toBe('https://editor.note.com/');
+    expect(headers.get('content-type')).toBeNull();
+    const form = init?.body as FormData;
+    expect(form.get('note_id')).toBe('166401625');
+    expect(form.get('width')).toBe('1280');
+    expect(form.get('height')).toBe('670');
+    const file = form.get('file') as File;
+    expect(file.name).toBe('cover.png');
+    expect(file.type).toBe('image/png');
   });
 
   it('deletes published notes by note key', async () => {

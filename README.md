@@ -235,6 +235,7 @@ note.com tools:
 - `note_create_draft` — create a draft by first calling `POST /v1/text_notes` with an empty-body editor payload to obtain `data.id`/`data.key`, then saving content via `draft_save`
 - `note_update_draft` — update a draft by numeric draft/note id
 - `note_publish_draft` — publish a draft by note key; internally resolves the numeric id from draft detail, then calls `PUT /v1/text_notes/{id}` with note.com's current publish payload
+- `note_upload_eyecatch` — upload an eyecatch/cover image via `POST /v1/image_upload/note_eyecatch`. Provide numeric `noteId` and either `imagePath` or `imageUrl`; width/height default to note.com's recommended `1280x670`.
 - `note_delete_draft` — delete an unpublished draft by numeric draft/note id via `DELETE /v1/text_notes/draft_delete?id={draftId}`
 - `note_delete_note` — delete a published/deletable note by note key via `DELETE /v1/notes/n/{noteKey}`
 
@@ -281,6 +282,7 @@ Known endpoint basis:
 - Draft shell create/id lookup: `POST /v1/text_notes` with `{ "body": "", "body_length": 0, "name": "...", "index": false, "is_lead_form": false }`; response includes numeric `data.id` and note `data.key`. Mutating editor requests should include `Origin: https://editor.note.com`, `Referer: https://editor.note.com/`, `X-Requested-With: XMLHttpRequest`, and `Content-Type: application/json`.
 - Draft save/update: `POST /v1/text_notes/draft_save?id={draftId}&is_temp_saved=true` with `body`, `body_length`, `name`, `index`, and `is_lead_form`
 - Draft publish: `PUT /v1/text_notes/{draftId}` with `free_body`, `pay_body`, `body_length`, and `status: "published"`
+- Eyecatch upload: `POST /v1/image_upload/note_eyecatch` as multipart/form-data with `note_id`, binary `file`, `width`, and `height`. The default/recommended image dimensions are `1280x670`.
 - Draft delete: `DELETE /v1/text_notes/draft_delete?id={draftId}`
 - Published/deletable note delete: `DELETE /v1/notes/n/{noteKey}`
 - Auth smoke test: `GET /v3/notice_counts`

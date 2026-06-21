@@ -266,6 +266,36 @@ async function runMcpServer(): Promise<void> {
   );
 
   server.registerTool(
+    'note_upload_eyecatch',
+    {
+      title: 'Upload note.com eyecatch image',
+      description:
+        'Uploads an eyecatch/cover image for a note via POST /v1/image_upload/note_eyecatch. Provide the numeric noteId and either imagePath or imageUrl. note.com recommends 1280x670px; width/height default to 1280/670.',
+      inputSchema: {
+        noteId: z.string().min(1),
+        imagePath: z.string().min(1).optional(),
+        imageUrl: z.string().url().optional(),
+        width: z.number().int().positive().default(1280),
+        height: z.number().int().positive().default(670),
+      },
+    },
+    async ({ noteId, imagePath, imageUrl, width, height }) => {
+      if (!imagePath && !imageUrl) {
+        return errorResult(new Error('imagePath or imageUrl is required'));
+      }
+      return withClient((client) =>
+        client.uploadEyecatch({
+          noteId,
+          ...(imagePath ? { imagePath } : {}),
+          ...(imageUrl ? { imageUrl } : {}),
+          width,
+          height,
+        }),
+      );
+    },
+  );
+
+  server.registerTool(
     'note_delete_draft',
     {
       title: 'Delete note.com draft',
