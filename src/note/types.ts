@@ -24,4 +24,5 @@ export interface DraftPayload {
 export interface ListMyNotesOptions {
   fields?: 'full' | 'summary';
   includeBody?: boolean | undefined;
+  limit?: number | undefined;
 }

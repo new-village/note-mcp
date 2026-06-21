@@ -27,7 +27,8 @@ export class NoteClient {
   }
 
   async listMyNotes(page = 1, options: ListMyNotesOptions = {}): Promise<JsonValue> {
-    const payload = await this.request(`/v2/creators/info/contents?kind=note&page=${page}`);
+    const limit = options.limit ?? 20;
+    const payload = await this.request(`/v2/note_list/contents?limit=${limit}&page=${page}`);
     if (options.fields === 'summary' || options.includeBody === false) {
       return summarizeListPayload(payload);
     }
@@ -105,6 +106,16 @@ function summarizeListPayload(payload: JsonValue): JsonValue {
     };
   }
 
+  if (isJsonObject(payload.data) && Array.isArray(payload.data.notes)) {
+    return {
+      ...payload,
+      data: {
+        ...payload.data,
+        notes: payload.data.notes.map(summarizeNoteItem),
+      },
+    };
+  }
+
   if (Array.isArray(payload.contents)) {
     return {
       ...payload,
@@ -122,10 +133,11 @@ function summarizeNoteItem(item: JsonValue): JsonValue {
   return omitUndefined({
     key,
     title: firstString(item.title, item.name),
-    url: firstString(item.url, item.noteUrl, item.note_url, item.path) ?? noteUrl(key),
+    url: firstString(item.url, item.noteUrl, item.note_url, item.path) ?? noteUrl(key, item.user),
     publishAt: firstDefined(item.publishAt, item.publish_at, item.publishedAt, item.published_at),
     status: item.status,
     likeCount: firstDefined(item.likeCount, item.like_count),
+    isAuthor: item.isAuthor,
   });
 }
 
@@ -137,8 +149,13 @@ function firstString(...values: Array<JsonValue | undefined>): string | undefine
   return values.find((value): value is string => typeof value === 'string' && value.length > 0);
 }
 
-function noteUrl(key: string | undefined): string | undefined {
-  return key ? `https://note.com/notes/${key}` : undefined;
+function noteUrl(key: string | undefined, user: JsonValue | undefined): string | undefined {
+  if (!key) return undefined;
+  if (isJsonObject(user)) {
+    const urlname = firstString(user.urlname);
+    if (urlname) return `https://note.com/${urlname}/n/${key}`;
+  }
+  return `https://note.com/notes/${key}`;
 }
 
 function omitUndefined(record: Record<string, JsonValue | undefined>): { [key: string]: JsonValue } {

@@ -228,7 +228,7 @@ Authentication/setup tools:
 note.com tools:
 
 - `note_auth_check` — verify configured cookie-based access to note.com internal APIs
-- `note_list_my_notes` — list creator contents for the authenticated account via `GET /v2/creators/info/contents?kind=note&page={page}`. By default returns the full internal API payload. For LLM-friendly list views, pass `fields: "summary"` or `includeBody: false` to return summary fields such as `title`, `key`, `url`, `publishAt`, `status`, and `likeCount`.
+- `note_list_my_notes` — list notes for the authenticated account via `GET /v2/note_list/contents?limit={limit}&page={page}`. By default returns the full internal API payload. For LLM-friendly list views, pass `fields: "summary"` or `includeBody: false` to return summary fields such as `title`, `key`, `url`, `publishAt`, `status`, `likeCount`, and `isAuthor`.
 - `note_list_drafts` — list drafts for the authenticated account
 - `note_get_note` — fetch a note by note key, e.g. `n1a0b26f944f4`
 - `note_create_draft` — create a draft
@@ -246,11 +246,11 @@ Known endpoint basis:
 
 - Base URL: `https://note.com/api`
 - Note detail: `GET /v3/notes/{noteKey}`
-- Authenticated creator contents: `GET /v2/creators/info/contents?kind=note&page=1`
+- Authenticated note list: `GET /v2/note_list/contents?limit=20&page=1`
 - Draft save: `POST /v1/text_notes/draft_save?id={draftId}`
 - Auth smoke test: `GET /v3/notice_counts`
 
-`note_list_my_notes` intentionally exposes the authenticated creator contents endpoint above. The exact visibility and shape are determined by note.com's internal API response for the configured cookie; use the default full response when debugging endpoint behavior, and use summary mode when a compact list is enough.
+`note_list_my_notes` intentionally exposes the authenticated note list endpoint above. The response shape is determined by note.com's internal API and typically returns items under `data.notes`; use the default full response when debugging endpoint behavior, and use summary mode when a compact list is enough.
 
 ## Release
 

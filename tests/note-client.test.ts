@@ -99,6 +99,47 @@ describe('NoteClient', () => {
         totalCount: 1,
       },
     });
+    expect(fetchMock.calls[0]?.[0]).toBe(
+      'https://note.com/api/v2/note_list/contents?limit=20&page=1',
+    );
+  });
+
+  it('summarizes note_list notes arrays from the authenticated user endpoint', async () => {
+    const fetchMock = mockFetch(async () =>
+      response({
+        data: {
+          notes: [
+            {
+              key: 'nuser123',
+              name: 'My own note',
+              body: 'long body',
+              publishAt: '2026-06-21T00:00:00+09:00',
+              status: 'published',
+              likeCount: 3,
+              isAuthor: true,
+              user: { urlname: 'kazu' },
+            },
+          ],
+        },
+      }),
+    );
+    const client = new NoteClient({ cookie: 'sid=abc', fetch: fetchMock });
+
+    await expect(client.listMyNotes(1, { fields: 'summary' })).resolves.toEqual({
+      data: {
+        notes: [
+          {
+            key: 'nuser123',
+            title: 'My own note',
+            url: 'https://note.com/kazu/n/nuser123',
+            publishAt: '2026-06-21T00:00:00+09:00',
+            status: 'published',
+            likeCount: 3,
+            isAuthor: true,
+          },
+        ],
+      },
+    });
   });
 
   it('treats fields summary as summary-only my notes output', async () => {
