@@ -231,8 +231,12 @@ note.com tools:
 - `note_list_my_notes` — list notes for the authenticated account via `GET /v2/note_list/contents?limit={limit}&page={page}`. By default returns the full internal API payload. For LLM-friendly list views, pass `fields: "summary"` or `includeBody: false` to return summary fields such as `title`, `key`, `url`, `publishAt`, `status`, `likeCount`, and `isAuthor`.
 - `note_list_drafts` — list drafts for the authenticated account via `GET /v2/note_list/contents?limit={limit}&page={page}&status=draft&without_magazines=true`. By default returns the full internal API payload. For LLM-friendly list views, pass `fields: "summary"` or `includeBody: false`.
 - `note_get_note` — fetch a note by note key, e.g. `n1a0b26f944f4`
-- `note_create_draft` — create a draft
-- `note_update_draft` — update a draft by draft id
+- `note_get_draft` — fetch authenticated draft detail by note key via `GET /v3/notes/{noteKey}?draft=true&draft_reedit=false`
+- `note_create_draft` — create a draft by first calling `POST /v1/text_notes` with `template_key: null` to obtain `data.id`/`data.key`, then saving content via `draft_save`
+- `note_update_draft` — update a draft by numeric draft/note id
+- `note_publish_draft` — publish a draft by note key; internally resolves the numeric id from draft detail, then calls `PUT /v1/text_notes/{id}` with note.com's current publish payload
+- `note_delete_draft` — delete an unpublished draft by numeric draft/note id via `DELETE /v1/text_notes/draft_delete?id={draftId}`
+- `note_delete_note` — delete a published/deletable note by note key via `DELETE /v1/notes/n/{noteKey}`
 
 If authentication is missing, note tools return an `auth_required` error suggesting `note_auth_login` or `note_set_cookie`.
 
@@ -246,9 +250,14 @@ Known endpoint basis:
 
 - Base URL: `https://note.com/api`
 - Note detail: `GET /v3/notes/{noteKey}`
+- Draft detail: `GET /v3/notes/{noteKey}?draft=true&draft_reedit=false&ts={timestamp}`
 - Authenticated note list: `GET /v2/note_list/contents?limit=20&page=1`
 - Authenticated draft list: `GET /v2/note_list/contents?limit=20&page=1&status=draft&without_magazines=true`
-- Draft save: `POST /v1/text_notes/draft_save?id={draftId}`
+- Draft shell create/id lookup: `POST /v1/text_notes` with `{ "name": "...", "template_key": null }`; response includes numeric `data.id` and note `data.key`
+- Draft save/update: `POST /v1/text_notes/draft_save?id={draftId}&is_temp_saved=true` with `body`, `body_length`, `name`, `index`, and `is_lead_form`
+- Draft publish: `PUT /v1/text_notes/{draftId}` with `free_body`, `pay_body`, `body_length`, and `status: "published"`
+- Draft delete: `DELETE /v1/text_notes/draft_delete?id={draftId}`
+- Published/deletable note delete: `DELETE /v1/notes/n/{noteKey}`
 - Auth smoke test: `GET /v3/notice_counts`
 
 `note_list_my_notes` and `note_list_drafts` intentionally expose the authenticated note list endpoints above. The response shape is determined by note.com's internal API and typically returns items under `data.notes`; use the default full response when debugging endpoint behavior, and use summary mode when a compact list is enough. Summary mode does not invent public URLs for drafts unless note.com returns an explicit URL/path.

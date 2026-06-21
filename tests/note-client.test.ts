@@ -45,22 +45,126 @@ describe('NoteClient', () => {
     expect(headers.get('x-requested-with')).toBe('XMLHttpRequest');
   });
 
-  it('builds the draft save endpoint for updates', async () => {
-    const fetchMock = mockFetch(async () => response({ draft: true }));
+  it('creates drafts by creating a shell note then saving draft content', async () => {
+    const fetchMock = mockFetch(async (input) => {
+      if (String(input).endsWith('/v1/text_notes')) {
+        return response({ data: { id: 123, key: 'n123', name: 't' } }, { status: 201 });
+      }
+      return response({ data: { result: true } }, { status: 201 });
+    });
     const client = new NoteClient({ cookie: 'sid=abc', fetch: fetchMock });
 
-    await client.updateDraft({ draftId: '123', title: 't', body: 'b', hashtags: ['mcp'] });
+    await expect(client.createDraft({ title: 't', body: '<p>b</p>' })).resolves.toEqual({
+      draft: { id: 123, key: 'n123', name: 't' },
+      save: { data: { result: true } },
+    });
+
+    expect(fetchMock.calls[0]?.[0]).toBe('https://note.com/api/v1/text_notes');
+    expect(fetchMock.calls[0]?.[1]?.method).toBe('POST');
+    expect(JSON.parse(fetchMock.calls[0]?.[1]?.body as string)).toEqual({
+      name: 't',
+      template_key: null,
+    });
+    expect(fetchMock.calls[1]?.[0]).toBe(
+      'https://note.com/api/v1/text_notes/draft_save?id=123&is_temp_saved=true',
+    );
+    expect(JSON.parse(fetchMock.calls[1]?.[1]?.body as string)).toEqual({
+      body: '<p>b</p>',
+      body_length: 1,
+      name: 't',
+      index: false,
+      is_lead_form: false,
+    });
+  });
+
+  it('builds the draft save endpoint for updates', async () => {
+    const fetchMock = mockFetch(async () => response({ draft: true }, { status: 201 }));
+    const client = new NoteClient({ cookie: 'sid=abc', fetch: fetchMock });
+
+    await client.updateDraft({ draftId: '123', title: 't', body: '<p>b</p>' });
 
     expect(fetchMock.calls[0]?.[0]).toBe(
-      'https://note.com/api/v1/text_notes/draft_save?id=123',
+      'https://note.com/api/v1/text_notes/draft_save?id=123&is_temp_saved=true',
     );
     const init = fetchMock.calls[0]?.[1];
     expect(init?.method).toBe('POST');
     expect(JSON.parse(init?.body as string)).toEqual({
-      title: 't',
-      body: 'b',
-      hashtags: ['mcp'],
+      body: '<p>b</p>',
+      body_length: 1,
+      name: 't',
+      index: false,
+      is_lead_form: false,
     });
+  });
+
+  it('fetches draft details with draft query parameters', async () => {
+    const fetchMock = mockFetch(async () => response({ data: { id: 123, key: 'n123' } }));
+    const client = new NoteClient({ cookie: 'sid=abc', fetch: fetchMock });
+
+    await client.getDraft('n123');
+
+    expect(String(fetchMock.calls[0]?.[0])).toMatch(
+      /^https:\/\/note\.com\/api\/v3\/notes\/n123\?draft=true&draft_reedit=false&ts=\d+$/,
+    );
+  });
+
+  it('deletes drafts by numeric note id', async () => {
+    const fetchMock = mockFetch(async () => response({ data: { result: true } }));
+    const client = new NoteClient({ cookie: 'sid=abc', fetch: fetchMock });
+
+    await client.deleteDraft('123');
+
+    expect(fetchMock.calls[0]?.[0]).toBe(
+      'https://note.com/api/v1/text_notes/draft_delete?id=123',
+    );
+    expect(fetchMock.calls[0]?.[1]?.method).toBe('DELETE');
+  });
+
+  it('publishes drafts with the current text_notes update payload', async () => {
+    const fetchMock = mockFetch(async (input) => {
+      if (String(input).includes('/v3/notes/n123?')) {
+        return response({
+          data: {
+            id: 123,
+            key: 'n123',
+            name: 't',
+            body: '<p>b</p>',
+            price: 0,
+            status: 'draft',
+            slug: 'slug-n123',
+            sendNotificationsFlag: false,
+          },
+        });
+      }
+      return response({ data: { status: 'published', key: 'n123' } });
+    });
+    const client = new NoteClient({ cookie: 'sid=abc', fetch: fetchMock });
+
+    await expect(client.publishDraft('n123')).resolves.toEqual({
+      data: { status: 'published', key: 'n123' },
+    });
+
+    expect(fetchMock.calls[1]?.[0]).toBe('https://note.com/api/v1/text_notes/123');
+    expect(fetchMock.calls[1]?.[1]?.method).toBe('PUT');
+    expect(JSON.parse(fetchMock.calls[1]?.[1]?.body as string)).toMatchObject({
+      body_length: 1,
+      free_body: '<p>b</p>',
+      pay_body: '',
+      status: 'published',
+      name: 't',
+      price: 0,
+      slug: 'slug-n123',
+    });
+  });
+
+  it('deletes published notes by note key', async () => {
+    const fetchMock = mockFetch(async () => response({ data: { result: true } }));
+    const client = new NoteClient({ cookie: 'sid=abc', fetch: fetchMock });
+
+    await client.deleteNote('n123');
+
+    expect(fetchMock.calls[0]?.[0]).toBe('https://note.com/api/v1/notes/n/n123');
+    expect(fetchMock.calls[0]?.[1]?.method).toBe('DELETE');
   });
 
   it('returns a summary-only my notes payload when includeBody is false', async () => {

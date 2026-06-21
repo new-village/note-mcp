@@ -19,6 +19,7 @@ export interface DraftPayload {
   body: string;
   hashtags?: string[];
   draftId?: string;
+  bodyLength?: number;
 }
 
 export interface ListMyNotesOptions {

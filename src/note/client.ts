@@ -50,24 +50,61 @@ export class NoteClient {
     return this.request(`/v3/notes/${encodeURIComponent(noteKey)}`);
   }
 
+  async getDraft(noteKey: string): Promise<JsonValue> {
+    return this.request(
+      `/v3/notes/${encodeURIComponent(noteKey)}?draft=true&draft_reedit=false&ts=${Date.now()}`,
+    );
+  }
+
   async createDraft(payload: Omit<DraftPayload, 'draftId'>): Promise<JsonValue> {
-    return this.saveDraft(payload);
+    const shell = await this.request('/v1/text_notes', {
+      method: 'POST',
+      body: JSON.stringify({ name: payload.title, template_key: null }),
+    });
+    const draft = extractDraft(shell);
+    const save = await this.saveDraft({ ...payload, draftId: String(draft.id) });
+    return { draft, save };
   }
 
   async updateDraft(payload: DraftPayload & { draftId: string }): Promise<JsonValue> {
     return this.saveDraft(payload);
   }
 
-  private async saveDraft(payload: DraftPayload): Promise<JsonValue> {
-    const query = payload.draftId ? `?id=${encodeURIComponent(payload.draftId)}` : '';
-    return this.request(`/v1/text_notes/draft_save${query}`, {
-      method: 'POST',
-      body: JSON.stringify({
-        title: payload.title,
-        body: payload.body,
-        hashtags: payload.hashtags ?? [],
-      }),
+  async publishDraft(noteKey: string): Promise<JsonValue> {
+    const draft = await this.getDraft(noteKey);
+    const note = extractNoteData(draft);
+    return this.request(`/v1/text_notes/${encodeURIComponent(String(note.id))}`, {
+      method: 'PUT',
+      body: JSON.stringify(publishPayload(note)),
     });
+  }
+
+  async deleteDraft(draftId: string): Promise<JsonValue> {
+    return this.request(`/v1/text_notes/draft_delete?id=${encodeURIComponent(draftId)}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async deleteNote(noteKey: string): Promise<JsonValue> {
+    return this.request(`/v1/notes/n/${encodeURIComponent(noteKey)}`, {
+      method: 'DELETE',
+    });
+  }
+
+  private async saveDraft(payload: DraftPayload & { draftId: string }): Promise<JsonValue> {
+    return this.request(
+      `/v1/text_notes/draft_save?id=${encodeURIComponent(payload.draftId)}&is_temp_saved=true`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          body: payload.body,
+          body_length: payload.bodyLength ?? textLength(payload.body),
+          name: payload.title,
+          index: false,
+          is_lead_form: false,
+        }),
+      },
+    );
   }
 
   private async request(path: string, init: RequestInit = {}): Promise<JsonValue> {
@@ -97,6 +134,70 @@ export class NoteClient {
 
     return body;
   }
+}
+
+function extractDraft(payload: JsonValue): { [key: string]: JsonValue; id: string | number } {
+  if (isJsonObject(payload) && isJsonObject(payload.data)) {
+    const id = payload.data.id;
+    if (typeof id === 'number' || typeof id === 'string') {
+      return { ...payload.data, id };
+    }
+  }
+  throw new NoteApiError('note.com draft shell response did not include data.id', 502, payload);
+}
+
+function extractNoteData(payload: JsonValue): { [key: string]: JsonValue; id: string | number } {
+  if (isJsonObject(payload) && isJsonObject(payload.data)) {
+    const id = payload.data.id;
+    if (typeof id === 'number' || typeof id === 'string') {
+      return { ...payload.data, id };
+    }
+  }
+  throw new NoteApiError('note.com note response did not include data.id', 502, payload);
+}
+
+function publishPayload(note: { [key: string]: JsonValue; id: string | number }): { [key: string]: JsonValue } {
+  const body = firstString(note.body) ?? '';
+  return {
+    author_ids: [],
+    body_length: textLength(body),
+    disable_comment: Boolean(note.disableComment ?? note.disable_comment ?? false),
+    exclude_from_creator_top: Boolean(note.excludeFromCreatorTop ?? note.exclude_from_creator_top ?? false),
+    exclude_ai_learning_reward: Boolean(
+      note.excludeAiLearningReward ?? note.exclude_ai_learning_reward ?? false,
+    ),
+    translation_setting: note.translationSetting ?? note.translation_setting ?? null,
+    free_body: body,
+    hashtags: [],
+    image_keys: [],
+    index: false,
+    is_refund: false,
+    limited: false,
+    magazine_ids: [],
+    magazine_keys: [],
+    name: firstString(note.name) ?? '',
+    pay_body: '',
+    price: typeof note.price === 'number' ? note.price : 0,
+    send_notifications_flag: Boolean(note.sendNotificationsFlag ?? note.send_notifications_flag ?? false),
+    separator: note.separator ?? null,
+    slug: note.slug ?? null,
+    status: 'published',
+    stock_photo_image_id: note.stockPhotoImageId ?? note.stock_photo_image_id ?? null,
+    owner_urlname: null,
+    circle_permissions: null,
+    discount_campaigns: [],
+    lead_form: null,
+    line_add_friend: null,
+    line_add_friend_access_token: null,
+    pro_coupon_keys: [],
+  };
+}
+
+function textLength(html: string): number {
+  return html
+    .replace(/<[^>]*>/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .trim().length;
 }
 
 function summarizeListPayload(payload: JsonValue): JsonValue {

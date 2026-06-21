@@ -191,6 +191,19 @@ async function runMcpServer(): Promise<void> {
   );
 
   server.registerTool(
+    'note_get_draft',
+    {
+      title: 'Get note.com draft detail',
+      description:
+        'Fetches an authenticated draft detail by note key via GET /v3/notes/{noteKey}?draft=true&draft_reedit=false. Use note_list_drafts to find the draft key first.',
+      inputSchema: {
+        noteKey: z.string().min(1),
+      },
+    },
+    async ({ noteKey }) => withClient((client) => client.getDraft(noteKey)),
+  );
+
+  server.registerTool(
     'note_create_draft',
     {
       title: 'Create note.com draft',
@@ -217,7 +230,7 @@ async function runMcpServer(): Promise<void> {
     {
       title: 'Update note.com draft',
       description:
-        'Updates a note.com draft by draft id using an unofficial internal API.',
+        'Updates a note.com draft by numeric draft/note id via POST /v1/text_notes/draft_save?id={draftId}&is_temp_saved=true.',
       inputSchema: {
         draftId: z.string().min(1),
         title: z.string().min(1),
@@ -234,6 +247,45 @@ async function runMcpServer(): Promise<void> {
           ...(hashtags ? { hashtags } : {}),
         }),
       ),
+  );
+
+  server.registerTool(
+    'note_publish_draft',
+    {
+      title: 'Publish note.com draft',
+      description:
+        'Publishes a draft by note key. Internally fetches draft detail via /v3/notes/{noteKey}?draft=true, then publishes with PUT /v1/text_notes/{id}.',
+      inputSchema: {
+        noteKey: z.string().min(1),
+      },
+    },
+    async ({ noteKey }) => withClient((client) => client.publishDraft(noteKey)),
+  );
+
+  server.registerTool(
+    'note_delete_draft',
+    {
+      title: 'Delete note.com draft',
+      description:
+        'Deletes a note.com draft by numeric draft/note id via DELETE /v1/text_notes/draft_delete?id={draftId}. note keys like n... are not accepted by this endpoint; use the id field from note_create_draft, note_list_drafts full output, or note_get_draft.',
+      inputSchema: {
+        draftId: z.string().min(1),
+      },
+    },
+    async ({ draftId }) => withClient((client) => client.deleteDraft(draftId)),
+  );
+
+  server.registerTool(
+    'note_delete_note',
+    {
+      title: 'Delete note.com note',
+      description:
+        'Deletes a published or deleted-capable note by note key via DELETE /v1/notes/n/{noteKey}. This is destructive; use only when the caller explicitly wants deletion.',
+      inputSchema: {
+        noteKey: z.string().min(1),
+      },
+    },
+    async ({ noteKey }) => withClient((client) => client.deleteNote(noteKey)),
   );
 
   const transport = new StdioServerTransport();
