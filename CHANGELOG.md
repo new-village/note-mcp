@@ -1,3 +1,10 @@
+# [1.3.0](https://github.com/new-village/note-mcp/compare/v1.2.3...v1.3.0) (2026-06-21)
+
+
+### Features
+
+* support note draft lifecycle tools ([c6fd8e2](https://github.com/new-village/note-mcp/commit/c6fd8e2883c0dbc1474ee0a661a6077c1593109c))
+
 ## [1.2.3](https://github.com/new-village/note-mcp/compare/v1.2.2...v1.2.3) (2026-06-21)
 
 
