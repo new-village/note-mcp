@@ -1,3 +1,10 @@
+# [1.2.0](https://github.com/new-village/note-mcp/compare/v1.1.2...v1.2.0) (2026-06-21)
+
+
+### Features
+
+* add lightweight my notes listings ([7458449](https://github.com/new-village/note-mcp/commit/7458449e578a7bfb06ec78334d1cd92afdbf53c3))
+
 ## [1.1.2](https://github.com/new-village/note-mcp/compare/v1.1.1...v1.1.2) (2026-06-21)
 
 
