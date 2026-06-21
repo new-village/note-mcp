@@ -14,6 +14,7 @@ import { runBrowserLogin } from './note/browser-login.js';
 import { NoteClient } from './note/client.js';
 import { NoteApiError, toErrorMessage } from './note/errors.js';
 import type { JsonValue } from './note/types.js';
+import { getPackageVersion } from './version.js';
 
 if (process.argv[2] === 'auth') {
   await runAuthCli(process.argv.slice(3));
@@ -45,7 +46,7 @@ async function runAuthCli(args: string[]): Promise<void> {
 async function runMcpServer(): Promise<void> {
   const server = new McpServer({
     name: 'note-mcp',
-    version: '1.1.0-development',
+    version: getPackageVersion(),
   });
 
   server.registerTool(
