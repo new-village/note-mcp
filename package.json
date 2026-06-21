@@ -1,0 +1,65 @@
+{
+  "name": "note-mcp",
+  "version": "0.0.0-development",
+  "description": "Unofficial stdio MCP server for note.com using cookie-based internal APIs.",
+  "type": "module",
+  "bin": {
+    "note-mcp": "dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --dts --clean",
+    "dev": "tsx src/index.ts",
+    "lint": "eslint .",
+    "format": "prettier --check .",
+    "format:write": "prettier --write .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "prepack": "npm run build",
+    "release": "semantic-release"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "note",
+    "note.com",
+    "stdio"
+  ],
+  "author": "new-village",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/new-village/note-mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/new-village/note-mcp/issues"
+  },
+  "homepage": "https://github.com/new-village/note-mcp#readme",
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@semantic-release/changelog": "^6.0.3",
+    "@semantic-release/git": "^10.0.1",
+    "@types/node": "^26.0.0",
+    "eslint": "^10.5.0",
+    "prettier": "^3.8.4",
+    "semantic-release": "^25.0.2",
+    "tsup": "^8.5.1",
+    "tsx": "^4.22.4",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.61.1",
+    "vitest": "^4.1.9"
+  }
+}
