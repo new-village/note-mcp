@@ -1,3 +1,10 @@
+## [1.3.2](https://github.com/new-village/note-mcp/compare/v1.3.1...v1.3.2) (2026-06-21)
+
+
+### Bug Fixes
+
+* document html body contract ([3bc1ea8](https://github.com/new-village/note-mcp/commit/3bc1ea81cfaec6800d645f215b74e21aba0f0832))
+
 ## [1.3.1](https://github.com/new-village/note-mcp/compare/v1.3.0...v1.3.1) (2026-06-21)
 
 
