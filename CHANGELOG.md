@@ -1,3 +1,10 @@
+## [1.1.1](https://github.com/new-village/note-mcp/compare/v1.1.0...v1.1.1) (2026-06-21)
+
+
+### Bug Fixes
+
+* explain missing Playwright browser install ([05526a9](https://github.com/new-village/note-mcp/commit/05526a979b18cd2e7090ea27d095cf899b6a4079))
+
 # [1.1.0](https://github.com/new-village/note-mcp/compare/v1.0.0...v1.1.0) (2026-06-21)
 
 
