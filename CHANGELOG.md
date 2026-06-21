@@ -1,3 +1,10 @@
+# [1.5.0](https://github.com/new-village/note-mcp/compare/v1.4.0...v1.5.0) (2026-06-21)
+
+
+### Features
+
+* add llm-friendly mutation summaries ([2157bad](https://github.com/new-village/note-mcp/commit/2157bad7510c9918a9137a3b20f1f946f96d3f78))
+
 # [1.4.0](https://github.com/new-village/note-mcp/compare/v1.3.2...v1.4.0) (2026-06-21)
 
 
