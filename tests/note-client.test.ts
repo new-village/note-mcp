@@ -352,6 +352,130 @@ describe("NoteClient", () => {
     expect(file.type).toBe("image/png");
   });
 
+  it("resolves noteKey before updating drafts", async () => {
+    const fetchMock = mockFetch(async (input) => {
+      const url = String(input);
+      if (url.includes("/v3/notes/n123?draft=true")) {
+        return response({
+          data: {
+            id: 123,
+            key: "n123",
+            status: "draft",
+            user: { urlname: "kazu" },
+          },
+        });
+      }
+      return response({ data: { result: true } }, { status: 201 });
+    });
+    const client = new NoteClient({ cookie: "sid=abc", fetch: fetchMock });
+
+    await expect(
+      client.updateDraftByNoteKey({
+        noteKey: "n123",
+        title: "t",
+        body: "<p>b</p>",
+        responseFormat: "summary",
+      }),
+    ).resolves.toMatchObject({
+      noteId: "123",
+      noteKey: "n123",
+      updated: true,
+    });
+    expect(fetchMock.calls[1]?.[0]).toBe(
+      "https://note.com/api/v1/text_notes/draft_save?id=123&is_temp_saved=true",
+    );
+  });
+
+  it("resolves noteKey before uploading eyecatch images", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "note-mcp-community-"));
+    const imagePath = join(dir, "cover.png");
+    writeFileSync(imagePath, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+    const fetchMock = mockFetch(async (input) => {
+      const url = String(input);
+      if (url.includes("/v3/notes/n123?draft=true")) {
+        return response({ data: { id: 123, key: "n123", status: "draft" } });
+      }
+      return response({ data: { url: "https://assets.example/cover.png" } });
+    });
+    const client = new NoteClient({ cookie: "sid=abc", fetch: fetchMock });
+
+    try {
+      await expect(
+        client.uploadEyecatch({
+          noteKey: "n123",
+          imagePath,
+          responseFormat: "summary",
+        }),
+      ).resolves.toMatchObject({ noteId: "123" });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+
+    const form = fetchMock.calls[1]?.[1]?.body as FormData;
+    expect(form.get("note_id")).toBe("123");
+  });
+
+  it("resizes note eyecatch images when fit is requested", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "note-mcp-community-"));
+    const imagePath = join(dir, "cover.svg");
+    writeFileSync(
+      imagePath,
+      '<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720"><rect width="1280" height="720" fill="red"/></svg>',
+    );
+    const fetchMock = mockFetch(async () =>
+      response({ data: { url: "https://assets.example/cover.jpg" } }),
+    );
+    const client = new NoteClient({ cookie: "sid=abc", fetch: fetchMock });
+
+    try {
+      await client.uploadEyecatch({
+        noteId: "123",
+        imagePath,
+        fit: "center-crop",
+        targetSize: "note-eyecatch",
+        responseFormat: "summary",
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+
+    const form = fetchMock.calls[0]?.[1]?.body as FormData;
+    const file = form.get("file") as File;
+    expect(file.name).toBe("cover.jpg");
+    expect(file.type).toBe("image/jpeg");
+    expect(form.get("width")).toBe("1280");
+    expect(form.get("height")).toBe("670");
+  });
+
+  it("returns compact summaries for note detail by default", async () => {
+    const fetchMock = mockFetch(async () =>
+      response({
+        data: {
+          id: 123,
+          key: "n123",
+          status: "draft",
+          name: "Title",
+          body: "<p>long body</p>",
+          user: { urlname: "kazu" },
+          can_update: true,
+          noteDraft: { huge: true },
+        },
+      }),
+    );
+    const client = new NoteClient({ cookie: "sid=abc", fetch: fetchMock });
+
+    await expect(client.getNote("n123")).resolves.toEqual({
+      id: 123,
+      key: "n123",
+      status: "draft",
+      name: "Title",
+      bodyPreview: "<p>long body</p>",
+      bodyLength: 9,
+      isDraft: true,
+      canUpdate: true,
+    });
+  });
+
   it("deletes published notes by note key", async () => {
     const fetchMock = mockFetch(async () =>
       response({ data: { result: true } }),

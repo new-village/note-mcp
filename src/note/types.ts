@@ -22,6 +22,7 @@ export interface DraftPayload {
   body: string;
   hashtags?: string[];
   draftId?: string;
+  noteKey?: string;
   bodyLength?: number;
   responseFormat?: ResponseFormat;
 }
@@ -33,11 +34,15 @@ export interface PublishDraftOptions {
 }
 
 export interface UploadEyecatchPayload {
-  noteId: string;
+  noteId?: string;
+  noteKey?: string;
   imagePath?: string;
   imageUrl?: string;
   width?: number;
   height?: number;
+  targetSize?: "note-eyecatch";
+  fit?: "none" | "center-crop" | "contain";
+  verify?: boolean;
   responseFormat?: ResponseFormat;
 }
 
@@ -45,4 +50,25 @@ export interface ListMyNotesOptions {
   fields?: "full" | "summary";
   includeBody?: boolean | undefined;
   limit?: number | undefined;
+}
+
+export interface GetNoteOptions {
+  responseFormat?: ResponseFormat;
+  fields?: string[];
+  includeBody?: boolean | undefined;
+  draft?: boolean | undefined;
+}
+
+export interface BundleDraftPayload {
+  title: string;
+  bodyHtml: string;
+  hashtags?: string[];
+  eyecatchImagePath?: string;
+  eyecatchImageUrl?: string;
+  verify?: boolean;
+  responseFormat?: ResponseFormat;
+}
+
+export interface UpdateDraftBundlePayload extends BundleDraftPayload {
+  noteKey: string;
 }

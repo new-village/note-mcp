@@ -228,14 +228,17 @@ Authentication/setup tools:
 note.com tools:
 
 - `note_auth_check` — verify configured cookie-based access to note.com internal APIs
-- `note_list_my_notes` — list notes for the authenticated account via `GET /v2/note_list/contents?limit={limit}&page={page}`. By default returns the full internal API payload. For LLM-friendly list views, pass `fields: "summary"` or `includeBody: false` to return summary fields such as `title`, `key`, `url`, `publishAt`, `status`, `likeCount`, and `isAuthor`.
-- `note_list_drafts` — list drafts for the authenticated account via `GET /v2/note_list/contents?limit={limit}&page={page}&status=draft&without_magazines=true`. By default returns the full internal API payload. For LLM-friendly list views, pass `fields: "summary"` or `includeBody: false`.
-- `note_get_note` — fetch a note by note key, e.g. `n1a0b26f944f4`
+- `note_list_my_notes` — list notes for the authenticated account via `GET /v2/note_list/contents?limit={limit}&page={page}`. Defaults to LLM-friendly summary output; pass `fields: "full"` for the raw internal API payload.
+- `note_list_drafts` — list drafts for the authenticated account via `GET /v2/note_list/contents?limit={limit}&page={page}&status=draft&without_magazines=true`. Defaults to LLM-friendly summary output; pass `fields: "full"` for the raw internal API payload.
+- `note_get_note` — fetch a note by note key, e.g. `n1a0b26f944f4`. Defaults to compact fields (`id`, `key`, `status`, `name`, `noteUrl`, `eyecatch`, `bodyPreview`, `bodyLength`, `isDraft`, `canUpdate`); pass `responseFormat: "full"` for the raw payload, `includeBody: true` for body content, or `fields: [...]` to pick specific fields.
 - `note_get_draft` — fetch authenticated draft detail by note key via `GET /v3/notes/{noteKey}?draft=true&draft_reedit=false`
 - `note_create_draft` — create a draft by first calling `POST /v1/text_notes` with an empty-body editor payload to obtain `data.id`/`data.key`, then saving content via `draft_save`. By default returns an LLM-friendly summary with `id`/`noteId`, `key`/`noteKey`, `editUrl`, `publicUrl`, and `nextActions`; pass `responseFormat: "full"` for raw responses.
-- `note_update_draft` — update a draft by numeric draft/note id. By default returns a compact summary; pass `responseFormat: "full"` for raw responses.
+- `note_update_draft` — update a draft by numeric `draftId` or by `noteKey` (the tool resolves numeric id internally). By default returns a compact summary; pass `responseFormat: "full"` for raw responses.
 - `note_publish_draft` — publicly publish a draft by note key; internally resolves the numeric id from draft detail, then calls `PUT /v1/text_notes/{id}` with note.com's current publish payload. By default returns `status`, `key`, `noteUrl`, `eyecatch`, and `publishedAt`; pass `responseFormat: "full"` for raw responses.
-- `note_upload_eyecatch` — upload an eyecatch/cover image via `POST /v1/image_upload/note_eyecatch`. Use the `draft.id` returned by `note_create_draft` as `noteId`; this can be called before publishing. Provide numeric `noteId` and either `imagePath` or `imageUrl`; width/height default to note.com's recommended `1280x670`. By default returns `noteId` and `eyecatchUrl`; pass `responseFormat: "full"` for raw responses.
+- `note_upload_eyecatch` — upload an eyecatch/cover image via `POST /v1/image_upload/note_eyecatch`. Provide numeric `noteId` or `noteKey`; `noteKey` is resolved internally. Provide `imagePath` or `imageUrl`; width/height default to note.com's recommended `1280x670`. The tool checks the 10MB upload limit and can read back compact state with `verify: true` when `noteKey` is supplied.
+- `note_prepare_draft` — high-level agent tool: create draft, optionally upload eyecatch, and return compact `status`, `noteId`, `noteKey`, `noteUrl`, and eyecatch result.
+- `note_update_draft_bundle` — high-level agent tool: update an existing draft by `noteKey`, optionally upload eyecatch, and return compact ids/URLs.
+- `note_markdown_to_note_html` — optional helper that converts simple Markdown headings, paragraphs, bullet lists, emphasis, and links to conservative note-compatible HTML.
 - `note_delete_draft` — delete an unpublished draft by numeric draft/note id via `DELETE /v1/text_notes/draft_delete?id={draftId}`
 - `note_delete_note` — delete a published/deletable note by note key via `DELETE /v1/notes/n/{noteKey}`
 
@@ -301,7 +304,7 @@ Known endpoint basis:
 - Published/deletable note delete: `DELETE /v1/notes/n/{noteKey}`
 - Auth smoke test: `GET /v3/notice_counts`
 
-`note_list_my_notes` and `note_list_drafts` intentionally expose the authenticated note list endpoints above. The response shape is determined by note.com's internal API and typically returns items under `data.notes`; use the default full response when debugging endpoint behavior, and use summary mode when a compact list is enough. Summary mode does not invent public URLs for drafts unless note.com returns an explicit URL/path.
+`note_list_my_notes` and `note_list_drafts` intentionally expose the authenticated note list endpoints above. The response shape is determined by note.com's internal API and typically returns items under `data.notes`; summary mode is the default to reduce agent token usage, and `fields: "full"` is available when debugging endpoint behavior. Summary mode does not invent public URLs for drafts unless note.com returns an explicit URL/path.
 
 ## Release
 

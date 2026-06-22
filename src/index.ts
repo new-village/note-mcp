@@ -19,6 +19,7 @@ import { getPackageVersion } from "./version.js";
 const NOTE_BODY_DESCRIPTION =
   "Article body as note-compatible HTML. Markdown is not rendered automatically by note.com; callers should convert Markdown to HTML before passing it.";
 const RESPONSE_FORMAT_SCHEMA = z.enum(["summary", "full"]).default("summary");
+const FIELDS_SCHEMA = z.array(z.string().min(1)).optional();
 
 if (process.argv[2] === "auth") {
   await runAuthCli(process.argv.slice(3));
@@ -176,11 +177,11 @@ async function runMcpServer(): Promise<void> {
     {
       title: "List my note.com notes",
       description:
-        'Lists notes for the authenticated note.com account via GET /v2/note_list/contents?limit=20&page=1. By default returns the full internal API payload; pass fields: "summary" or includeBody: false for a lightweight list with title/key/url/publishAt/status/likeCount/isAuthor.',
+        'Lists notes for the authenticated note.com account via GET /v2/note_list/contents?limit=20&page=1. Defaults to lightweight summary output; pass fields: "full" for the raw internal API payload.',
       inputSchema: {
         page: z.number().int().positive().default(1),
         limit: z.number().int().positive().default(20),
-        fields: z.enum(["full", "summary"]).default("full"),
+        fields: z.enum(["full", "summary"]).default("summary"),
         includeBody: z.boolean().optional(),
       },
     },
@@ -195,11 +196,11 @@ async function runMcpServer(): Promise<void> {
     {
       title: "List note.com drafts",
       description:
-        'Lists drafts for the authenticated note.com account via GET /v2/note_list/contents?limit=20&page=1&status=draft&without_magazines=true. By default returns the full internal API payload; pass fields: "summary" or includeBody: false for a lightweight list.',
+        'Lists drafts for the authenticated note.com account via GET /v2/note_list/contents?limit=20&page=1&status=draft&without_magazines=true. Defaults to lightweight summary output; pass fields: "full" for the raw internal API payload.',
       inputSchema: {
         page: z.number().int().positive().default(1),
         limit: z.number().int().positive().default(20),
-        fields: z.enum(["full", "summary"]).default("full"),
+        fields: z.enum(["full", "summary"]).default("summary"),
         includeBody: z.boolean().optional(),
       },
     },
@@ -213,12 +214,23 @@ async function runMcpServer(): Promise<void> {
     "note_get_note",
     {
       title: "Get note.com note",
-      description: "Fetches a note by note key, e.g. n1a0b26f944f4.",
+      description:
+        'Fetches a note by note key, e.g. n1a0b26f944f4. Defaults to compact summary fields; pass responseFormat: "full" or includeBody: true when the full body/internal payload is needed.',
       inputSchema: {
         noteKey: z.string().min(1),
+        responseFormat: RESPONSE_FORMAT_SCHEMA,
+        fields: FIELDS_SCHEMA,
+        includeBody: z.boolean().optional(),
       },
     },
-    async ({ noteKey }) => withClient((client) => client.getNote(noteKey)),
+    async ({ noteKey, responseFormat, fields, includeBody }) =>
+      withClient((client) =>
+        client.getNote(noteKey, {
+          responseFormat,
+          ...(fields ? { fields } : {}),
+          ...(includeBody === undefined ? {} : { includeBody }),
+        }),
+      ),
   );
 
   server.registerTool(
@@ -265,23 +277,36 @@ async function runMcpServer(): Promise<void> {
       description:
         'Updates a note.com draft by numeric draft/note id via POST /v1/text_notes/draft_save?id={draftId}&is_temp_saved=true. The body should be HTML compatible with note.com editor content. Do not pass Markdown if visual formatting is expected; convert Markdown to HTML before calling this tool. By default returns a compact summary; pass responseFormat: "full" for the raw API payload.',
       inputSchema: {
-        draftId: z.string().min(1),
+        draftId: z.string().min(1).optional(),
+        noteKey: z.string().min(1).optional(),
         title: z.string().min(1),
         body: z.string().min(1).describe(NOTE_BODY_DESCRIPTION),
         hashtags: z.array(z.string().min(1)).optional(),
         responseFormat: RESPONSE_FORMAT_SCHEMA,
       },
     },
-    async ({ draftId, title, body, hashtags, responseFormat }) =>
-      withClient((client) =>
-        client.updateDraft({
-          draftId,
-          title,
-          body,
-          ...(hashtags ? { hashtags } : {}),
-          responseFormat,
-        }),
-      ),
+    async ({ draftId, noteKey, title, body, hashtags, responseFormat }) => {
+      if (!draftId && !noteKey) {
+        return errorResult(new Error("draftId or noteKey is required"));
+      }
+      return withClient((client) =>
+        noteKey && !draftId
+          ? client.updateDraftByNoteKey({
+              noteKey,
+              title,
+              body,
+              ...(hashtags ? { hashtags } : {}),
+              responseFormat,
+            })
+          : client.updateDraft({
+              draftId: draftId as string,
+              title,
+              body,
+              ...(hashtags ? { hashtags } : {}),
+              responseFormat,
+            }),
+      );
+    },
   );
 
   server.registerTool(
@@ -304,31 +329,139 @@ async function runMcpServer(): Promise<void> {
     {
       title: "Upload note.com eyecatch image",
       description:
-        'Uploads an eyecatch/cover image for a note via POST /v1/image_upload/note_eyecatch. Use draft.id returned by note_create_draft as noteId; this can be called before publishing. Provide the numeric noteId and either imagePath or imageUrl. note.com recommends 1280x670px; width/height default to 1280/670. By default returns noteId and eyecatchUrl; pass responseFormat: "full" for the raw API payload.',
+        "Uploads an eyecatch/cover image for a note via POST /v1/image_upload/note_eyecatch. Provide numeric noteId or noteKey; noteKey is resolved internally through draft detail. Provide imagePath or imageUrl. note.com recommends 1280x670px; width/height default to 1280/670. Set verify: true with noteKey to read back compact note state after upload.",
       inputSchema: {
-        noteId: z.string().min(1),
+        noteId: z.string().min(1).optional(),
+        noteKey: z.string().min(1).optional(),
         imagePath: z.string().min(1).optional(),
         imageUrl: z.string().url().optional(),
         width: z.number().int().positive().default(1280),
         height: z.number().int().positive().default(670),
+        targetSize: z.enum(["note-eyecatch"]).optional(),
+        fit: z.enum(["none", "center-crop", "contain"]).default("none"),
+        verify: z.boolean().default(false),
         responseFormat: RESPONSE_FORMAT_SCHEMA,
       },
     },
-    async ({ noteId, imagePath, imageUrl, width, height, responseFormat }) => {
+    async ({
+      noteId,
+      noteKey,
+      imagePath,
+      imageUrl,
+      width,
+      height,
+      targetSize,
+      fit,
+      verify,
+      responseFormat,
+    }) => {
+      if (!noteId && !noteKey) {
+        return errorResult(new Error("noteId or noteKey is required"));
+      }
       if (!imagePath && !imageUrl) {
         return errorResult(new Error("imagePath or imageUrl is required"));
       }
       return withClient((client) =>
         client.uploadEyecatch({
-          noteId,
+          ...(noteId ? { noteId } : {}),
+          ...(noteKey ? { noteKey } : {}),
           ...(imagePath ? { imagePath } : {}),
           ...(imageUrl ? { imageUrl } : {}),
           width,
           height,
+          ...(targetSize ? { targetSize } : {}),
+          fit,
+          verify,
           responseFormat,
         }),
       );
     },
+  );
+
+  server.registerTool(
+    "note_prepare_draft",
+    {
+      title: "Prepare note.com draft bundle",
+      description:
+        "Creates a draft, optionally uploads an eyecatch, and returns compact ids/URLs for AI agents.",
+      inputSchema: {
+        title: z.string().min(1),
+        bodyHtml: z.string().min(1).describe(NOTE_BODY_DESCRIPTION),
+        hashtags: z.array(z.string().min(1)).optional(),
+        eyecatchImagePath: z.string().min(1).optional(),
+        eyecatchImageUrl: z.string().url().optional(),
+        verify: z.boolean().default(true),
+        responseFormat: RESPONSE_FORMAT_SCHEMA,
+      },
+    },
+    async ({
+      title,
+      bodyHtml,
+      hashtags,
+      eyecatchImagePath,
+      eyecatchImageUrl,
+      verify,
+    }) =>
+      withClient((client) =>
+        client.prepareDraftBundle({
+          title,
+          bodyHtml,
+          ...(hashtags ? { hashtags } : {}),
+          ...(eyecatchImagePath ? { eyecatchImagePath } : {}),
+          ...(eyecatchImageUrl ? { eyecatchImageUrl } : {}),
+          verify,
+        }),
+      ),
+  );
+
+  server.registerTool(
+    "note_update_draft_bundle",
+    {
+      title: "Update note.com draft bundle",
+      description:
+        "Updates a draft by noteKey, optionally uploads an eyecatch, and returns compact ids/URLs for AI agents.",
+      inputSchema: {
+        noteKey: z.string().min(1),
+        title: z.string().min(1),
+        bodyHtml: z.string().min(1).describe(NOTE_BODY_DESCRIPTION),
+        hashtags: z.array(z.string().min(1)).optional(),
+        eyecatchImagePath: z.string().min(1).optional(),
+        eyecatchImageUrl: z.string().url().optional(),
+        verify: z.boolean().default(true),
+        responseFormat: RESPONSE_FORMAT_SCHEMA,
+      },
+    },
+    async ({
+      noteKey,
+      title,
+      bodyHtml,
+      hashtags,
+      eyecatchImagePath,
+      eyecatchImageUrl,
+      verify,
+    }) =>
+      withClient((client) =>
+        client.updateDraftBundle({
+          noteKey,
+          title,
+          bodyHtml,
+          ...(hashtags ? { hashtags } : {}),
+          ...(eyecatchImagePath ? { eyecatchImagePath } : {}),
+          ...(eyecatchImageUrl ? { eyecatchImageUrl } : {}),
+          verify,
+        }),
+      ),
+  );
+
+  server.registerTool(
+    "note_markdown_to_note_html",
+    {
+      title: "Convert Markdown to simple note.com HTML",
+      description:
+        "Converts common Markdown headings, paragraphs, lists, emphasis, and links to conservative note-compatible HTML. This is a helper, not a full Markdown engine.",
+      inputSchema: { markdown: z.string().min(1) },
+    },
+    async ({ markdown }) => result({ html: markdownToNoteHtml(markdown) }),
   );
 
   server.registerTool(
@@ -368,6 +501,49 @@ async function withClient(fn: (client: NoteClient) => Promise<JsonValue>) {
   } catch (error) {
     return errorResult(error);
   }
+}
+
+function markdownToNoteHtml(markdown: string): string {
+  const escapeHtml = (text: string) =>
+    text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const inline = (text: string) =>
+    escapeHtml(text)
+      .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2">$1</a>')
+      .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+      .replace(/\*([^*]+)\*/g, "<em>$1</em>");
+
+  const blocks: string[] = [];
+  let listItems: string[] = [];
+  const flushList = () => {
+    if (listItems.length > 0) {
+      blocks.push(`<ul>${listItems.join("")}</ul>`);
+      listItems = [];
+    }
+  };
+
+  for (const rawLine of markdown.split(/\r?\n/)) {
+    const line = (rawLine ?? "").trim();
+    if (!line) {
+      flushList();
+      continue;
+    }
+    const heading = /^(#{1,3})\s+(.+)$/.exec(line);
+    if (heading) {
+      flushList();
+      const level = (heading[1] ?? "#").length + 1;
+      blocks.push(`<h${level}>${inline(heading[2] ?? "")}</h${level}>`);
+      continue;
+    }
+    const bullet = /^[-*]\s+(.+)$/.exec(line);
+    if (bullet) {
+      listItems.push(`<li>${inline(bullet[1] ?? "")}</li>`);
+      continue;
+    }
+    flushList();
+    blocks.push(`<p>${inline(line)}</p>`);
+  }
+  flushList();
+  return blocks.join("\n");
 }
 
 function jsonText(value: JsonValue): string {

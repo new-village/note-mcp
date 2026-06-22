@@ -1,15 +1,20 @@
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { basename } from "node:path";
+
+import sharp from "sharp";
 
 import { NoteApiError } from "./errors.js";
 import type {
+  BundleDraftPayload,
   DraftPayload,
   FetchLike,
+  GetNoteOptions,
   JsonValue,
   ListMyNotesOptions,
   NoteClientOptions,
   PublishDraftOptions,
   UploadEyecatchPayload,
+  UpdateDraftBundlePayload,
 } from "./types.js";
 
 const BASE_URL = "https://note.com/api";
@@ -17,6 +22,9 @@ const EDITOR_ORIGIN = "https://editor.note.com";
 const EDITOR_REFERER = "https://editor.note.com/";
 const DEFAULT_USER_AGENT =
   "note-mcp-community/0.0.0 (+https://github.com/new-village/note-mcp-community)";
+const NOTE_EYECATCH_WIDTH = 1280;
+const NOTE_EYECATCH_HEIGHT = 670;
+const MAX_EYECATCH_BYTES = 10 * 1024 * 1024;
 
 export class NoteClient {
   private readonly cookie: string;
@@ -41,7 +49,7 @@ export class NoteClient {
     const payload = await this.request(
       `/v2/note_list/contents?limit=${limit}&page=${page}`,
     );
-    if (options.fields === "summary" || options.includeBody === false) {
+    if (options.fields !== "full" || options.includeBody === false) {
       return summarizeListPayload(payload);
     }
     return payload;
@@ -55,20 +63,34 @@ export class NoteClient {
     const payload = await this.request(
       `/v2/note_list/contents?limit=${limit}&page=${page}&status=draft&without_magazines=true`,
     );
-    if (options.fields === "summary" || options.includeBody === false) {
+    if (options.fields !== "full" || options.includeBody === false) {
       return summarizeListPayload(payload);
     }
     return payload;
   }
 
-  async getNote(noteKey: string): Promise<JsonValue> {
-    return this.request(`/v3/notes/${encodeURIComponent(noteKey)}`);
+  async getNote(
+    noteKey: string,
+    options: GetNoteOptions = {},
+  ): Promise<JsonValue> {
+    const query = options.draft
+      ? `?draft=true&draft_reedit=false&ts=${Date.now()}`
+      : "";
+    const payload = await this.request(
+      `/v3/notes/${encodeURIComponent(noteKey)}${query}`,
+    );
+    if (
+      options.responseFormat !== "full" ||
+      options.fields ||
+      options.includeBody === false
+    ) {
+      return summarizeNotePayload(payload, options);
+    }
+    return payload;
   }
 
   async getDraft(noteKey: string): Promise<JsonValue> {
-    return this.request(
-      `/v3/notes/${encodeURIComponent(noteKey)}?draft=true&draft_reedit=false&ts=${Date.now()}`,
-    );
+    return this.getNote(noteKey, { draft: true, responseFormat: "full" });
   }
 
   async createDraft(
@@ -111,6 +133,79 @@ export class NoteClient {
     return save;
   }
 
+  async updateDraftByNoteKey(
+    payload: DraftPayload & { noteKey: string },
+  ): Promise<JsonValue> {
+    const draft = await this.getDraft(payload.noteKey);
+    const note = extractNoteData(draft);
+    const result = await this.updateDraft({
+      ...payload,
+      draftId: String(note.id),
+    });
+    if (payload.responseFormat === "summary") {
+      const key = firstString(note.key, note.noteKey, payload.noteKey);
+      return omitUndefined({
+        ...(isJsonObject(result) ? result : {}),
+        id: String(note.id),
+        noteId: String(note.id),
+        key,
+        noteKey: key,
+        noteUrl: noteUrl(key, note.user, note.status),
+      });
+    }
+    return result;
+  }
+
+  async prepareDraftBundle(payload: BundleDraftPayload): Promise<JsonValue> {
+    const draft = await this.createDraft({
+      title: payload.title,
+      body: payload.bodyHtml,
+      ...(payload.hashtags ? { hashtags: payload.hashtags } : {}),
+      responseFormat: "summary",
+    });
+    const source = isJsonObject(draft) ? draft : {};
+    const noteId = firstDefined(source.noteId, source.id);
+    const noteKey = firstString(source.noteKey, source.key);
+    const eyecatch = await this.maybeUploadBundleEyecatch({
+      ...(noteId === undefined ? {} : { noteId: String(noteId) }),
+      ...(noteKey ? { noteKey } : {}),
+      ...(payload.eyecatchImagePath
+        ? { imagePath: payload.eyecatchImagePath }
+        : {}),
+      ...(payload.eyecatchImageUrl
+        ? { imageUrl: payload.eyecatchImageUrl }
+        : {}),
+      ...(payload.verify === undefined ? {} : { verify: payload.verify }),
+    });
+    return bundleSummary(source, eyecatch);
+  }
+
+  async updateDraftBundle(
+    payload: UpdateDraftBundlePayload,
+  ): Promise<JsonValue> {
+    const updated = await this.updateDraftByNoteKey({
+      noteKey: payload.noteKey,
+      title: payload.title,
+      body: payload.bodyHtml,
+      ...(payload.hashtags ? { hashtags: payload.hashtags } : {}),
+      responseFormat: "summary",
+    });
+    const source = isJsonObject(updated) ? updated : {};
+    const noteId = firstDefined(source.noteId, source.id);
+    const eyecatch = await this.maybeUploadBundleEyecatch({
+      ...(noteId === undefined ? {} : { noteId: String(noteId) }),
+      noteKey: payload.noteKey,
+      ...(payload.eyecatchImagePath
+        ? { imagePath: payload.eyecatchImagePath }
+        : {}),
+      ...(payload.eyecatchImageUrl
+        ? { imageUrl: payload.eyecatchImageUrl }
+        : {}),
+      ...(payload.verify === undefined ? {} : { verify: payload.verify }),
+    });
+    return bundleSummary(source, eyecatch);
+  }
+
   async publishDraft(
     noteKey: string,
     options: PublishDraftOptions = {},
@@ -131,19 +226,38 @@ export class NoteClient {
   }
 
   async uploadEyecatch(payload: UploadEyecatchPayload): Promise<JsonValue> {
+    const noteId =
+      payload.noteId ??
+      (payload.noteKey ? await this.resolveNoteId(payload.noteKey) : undefined);
+    if (!noteId) {
+      throw new NoteApiError("noteId or noteKey is required", 400, null);
+    }
+    const resolvedNoteId = noteId;
+
     const file = await this.fileFromPayload(payload);
     const form = new FormData();
-    form.append("note_id", payload.noteId);
+    form.append("note_id", resolvedNoteId);
     form.append("file", file);
-    form.append("width", String(payload.width ?? 1280));
-    form.append("height", String(payload.height ?? 670));
+    form.append("width", String(payload.width ?? NOTE_EYECATCH_WIDTH));
+    form.append("height", String(payload.height ?? NOTE_EYECATCH_HEIGHT));
 
     const uploaded = await this.request("/v1/image_upload/note_eyecatch", {
       method: "POST",
       body: form,
     });
     if (payload.responseFormat === "summary") {
-      return eyecatchSummary(uploaded, payload);
+      const summary = eyecatchSummary(uploaded, { ...payload, noteId });
+      if (payload.verify && payload.noteKey) {
+        return Object.assign({}, isJsonObject(summary) ? summary : {}, {
+          verification: summarizeNotePayload(
+            await this.getDraft(payload.noteKey),
+            {
+              responseFormat: "summary",
+            },
+          ),
+        });
+      }
+      return summary;
     }
     return uploaded;
   }
@@ -160,6 +274,27 @@ export class NoteClient {
   async deleteNote(noteKey: string): Promise<JsonValue> {
     return this.request(`/v1/notes/n/${encodeURIComponent(noteKey)}`, {
       method: "DELETE",
+    });
+  }
+
+  private async resolveNoteId(noteKey: string): Promise<string> {
+    const draft = await this.getDraft(noteKey);
+    return String(extractNoteData(draft).id);
+  }
+
+  private async maybeUploadBundleEyecatch(payload: {
+    noteId?: string;
+    noteKey?: string;
+    imagePath?: string;
+    imageUrl?: string;
+    verify?: boolean;
+  }): Promise<JsonValue | undefined> {
+    if (!payload.imagePath && !payload.imageUrl) return undefined;
+    return this.uploadEyecatch({
+      ...payload,
+      targetSize: "note-eyecatch",
+      fit: "center-crop",
+      responseFormat: "summary",
     });
   }
 
@@ -203,9 +338,24 @@ export class NoteClient {
 
   private async fileFromPayload(payload: UploadEyecatchPayload): Promise<File> {
     if (payload.imagePath) {
+      const info = await stat(payload.imagePath);
+      if (info.size > MAX_EYECATCH_BYTES) {
+        throw new NoteApiError(
+          "eyecatch image exceeds note.com's 10MB limit",
+          400,
+          {
+            imagePath: payload.imagePath,
+            size: info.size,
+            maxSize: MAX_EYECATCH_BYTES,
+          },
+        );
+      }
       const bytes = await readFile(payload.imagePath);
-      const filename = basename(payload.imagePath);
-      return new File([bytes], filename, { type: mimeType(filename) });
+      return await this.prepareEyecatchFile(
+        bytes,
+        basename(payload.imagePath),
+        payload,
+      );
     }
 
     if (payload.imageUrl) {
@@ -218,14 +368,75 @@ export class NoteClient {
           null,
         );
       }
+      if (body.byteLength > MAX_EYECATCH_BYTES) {
+        throw new NoteApiError(
+          "eyecatch image exceeds note.com's 10MB limit",
+          400,
+          {
+            imageUrl: payload.imageUrl,
+            size: body.byteLength,
+            maxSize: MAX_EYECATCH_BYTES,
+          },
+        );
+      }
       const filename =
         basename(new URL(payload.imageUrl).pathname) || "eyecatch.jpg";
-      const contentType =
-        response.headers.get("content-type") ?? mimeType(filename);
-      return new File([body], filename, { type: contentType });
+      return await this.prepareEyecatchFile(
+        Buffer.from(body),
+        filename,
+        payload,
+      );
     }
 
     throw new NoteApiError("imagePath or imageUrl is required", 400, null);
+  }
+
+  private async prepareEyecatchFile(
+    bytes: Buffer,
+    filename: string,
+    payload: UploadEyecatchPayload,
+  ): Promise<File> {
+    const targetWidth = payload.width ?? NOTE_EYECATCH_WIDTH;
+    const targetHeight = payload.height ?? NOTE_EYECATCH_HEIGHT;
+    const shouldTransform =
+      payload.targetSize === "note-eyecatch" || payload.fit;
+
+    if (!shouldTransform || payload.fit === "none") {
+      return new File([bufferToArrayBuffer(bytes)], filename, {
+        type: mimeType(filename),
+      });
+    }
+
+    const fit = payload.fit === "contain" ? "contain" : "cover";
+    const output = await sharp(bytes)
+      .resize(targetWidth, targetHeight, {
+        fit,
+        position: "centre",
+        background: { r: 255, g: 255, b: 255, alpha: 1 },
+      })
+      .jpeg({ quality: 90, mozjpeg: true })
+      .toBuffer();
+
+    if (output.byteLength > MAX_EYECATCH_BYTES) {
+      throw new NoteApiError(
+        "processed eyecatch image exceeds note.com's 10MB limit",
+        400,
+        {
+          size: output.byteLength,
+          maxSize: MAX_EYECATCH_BYTES,
+          width: targetWidth,
+          height: targetHeight,
+        },
+      );
+    }
+
+    return new File(
+      [new Uint8Array(output)],
+      replaceExtension(filename, ".jpg"),
+      {
+        type: "image/jpeg",
+      },
+    );
   }
 
   private async request(
@@ -258,7 +469,11 @@ export class NoteClient {
       throw new NoteApiError(
         `note.com API request failed: ${response.status} ${response.statusText}`,
         response.status,
-        body,
+        {
+          endpoint: `${BASE_URL}${path}`,
+          method: init.method?.toUpperCase() ?? "GET",
+          body,
+        },
       );
     }
 
@@ -443,11 +658,108 @@ function mimeType(filename: string): string {
   return "application/octet-stream";
 }
 
+function replaceExtension(filename: string, extension: string): string {
+  const base = filename.replace(/\.[^.]*$/, "");
+  return `${base || "eyecatch"}${extension}`;
+}
+
+function bufferToArrayBuffer(buffer: Buffer): ArrayBuffer {
+  return buffer.buffer.slice(
+    buffer.byteOffset,
+    buffer.byteOffset + buffer.byteLength,
+  ) as ArrayBuffer;
+}
+
 function textLength(html: string): number {
   return html
     .replace(/<[^>]*>/g, "")
     .replace(/&nbsp;/g, " ")
     .trim().length;
+}
+
+function summarizeNotePayload(
+  payload: JsonValue,
+  options: GetNoteOptions = {},
+): JsonValue {
+  if (!isJsonObject(payload)) return payload;
+  const source = isJsonObject(payload.data) ? payload.data : payload;
+  const summary = summarizeNoteObject(source, options);
+  if (options.fields && options.fields.length > 0) {
+    return pickFields(summary, options.fields);
+  }
+  return summary;
+}
+
+function summarizeNoteObject(
+  note: { [key: string]: JsonValue },
+  options: GetNoteOptions = {},
+): JsonValue {
+  const key = firstString(note.key, note.noteKey);
+  const body = firstString(note.body, note.free_body, note.content);
+  const status =
+    firstDefined(note.status) ?? (options.draft ? "draft" : undefined);
+  const eyecatch = firstString(
+    note.eyecatch,
+    note.eyecatchUrl,
+    note.eyecatch_url,
+    note.image,
+  );
+  return omitUndefined({
+    id: firstDefined(note.id, note.noteId),
+    key,
+    status,
+    name: firstString(note.name, note.title),
+    noteUrl: noteUrl(key, note.user, status),
+    eyecatch,
+    eyecatch_width: firstDefined(note.eyecatch_width, note.eyecatchWidth),
+    eyecatch_height: firstDefined(note.eyecatch_height, note.eyecatchHeight),
+    bodyPreview:
+      options.includeBody === true && body
+        ? body
+        : body
+          ? body.slice(0, 300)
+          : undefined,
+    bodyLength: body ? textLength(body) : undefined,
+    isDraft: status === "draft" || options.draft === true,
+    canUpdate: firstDefined(note.can_update, note.canUpdate),
+  });
+}
+
+function pickFields(
+  value: JsonValue,
+  fields: string[],
+): { [key: string]: JsonValue } | JsonValue {
+  if (!isJsonObject(value)) return value;
+  return Object.fromEntries(
+    fields
+      .filter((field) => value[field] !== undefined)
+      .map((field) => [field, value[field] as JsonValue]),
+  );
+}
+
+function bundleSummary(
+  draft: { [key: string]: JsonValue },
+  eyecatch: JsonValue | undefined,
+): JsonValue {
+  const noteId = firstDefined(draft.noteId, draft.id);
+  const noteKey = firstString(draft.noteKey, draft.key);
+  const eyecatchObject = isJsonObject(eyecatch) ? eyecatch : undefined;
+  return omitUndefined({
+    status: "draft",
+    noteId,
+    noteKey,
+    noteUrl: firstString(draft.noteUrl, draft.publicUrl),
+    eyecatch: eyecatchObject
+      ? omitUndefined({
+          set: Boolean(
+            firstString(eyecatchObject.url, eyecatchObject.eyecatchUrl),
+          ),
+          url: firstString(eyecatchObject.url, eyecatchObject.eyecatchUrl),
+          width: firstDefined(eyecatchObject.width),
+          height: firstDefined(eyecatchObject.height),
+        })
+      : undefined,
+  });
 }
 
 function summarizeListPayload(payload: JsonValue): JsonValue {
